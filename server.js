@@ -94,33 +94,68 @@ app.get("/api/clicks/:id", adminOnly, (req, res) => {
   res.json(clicks);
 });
 
-// This page explains the analytics before the visitor chooses to continue.
 app.get("/r/:id", (req, res) => {
   const link = data.links.find(l => l.id === req.params.id);
   if (!link) return res.status(404).send("This BAZUU link does not exist.");
+
   const safeTitle = escapeHtml(link.title);
   const safeDestination = escapeHtml(link.destination);
-  res.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Continue — BAZUU</title><style>
-  body{font:16px system-ui;background:#10131b;color:#eef2ff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
-  main{max-width:520px;background:#1b2230;border:1px solid #30394a;border-radius:18px;padding:28px;box-sizing:border-box}
-  h1{margin-top:0}p{line-height:1.6;color:#c5cede}.muted{font-size:13px;color:#98a6ba;overflow-wrap:anywhere}
-  button{background:#7c9cff;color:#10131b;border:0;border-radius:10px;padding:13px 18px;font-weight:700;font-size:16px;cursor:pointer}
-  </style></head><body><main><h1>Continue to your link</h1><p><strong>${safeTitle}</strong></p>
-  <p>This link uses BAZUU click analytics. If you choose to continue, BAZUU records the time of the click, your browser/device category, and referring page when your browser provides it. BAZUU does <strong>not</strong> store your IP address or access your GPS location.</p>
-  <p class="muted">Destination: ${safeDestination}</p>
-  <button id="continue">Continue to destination</button>
-  <p class="muted">If you do not want this click recorded, close this page.</p>
-  </main><script>
-  document.getElementById('continue').addEventListener('click', async function(){
-    this.disabled=true; this.textContent='Continuing…';
-    try {
-      await fetch('/api/click/${link.id}', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({consent:true})});
-    } catch(e) {}
-    window.location.assign(${JSON.stringify(link.destination)});
-  });
-  </script></body></html>`);
-});
 
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Continue — BAZUU</title>
+<style>
+body{font:16px system-ui;background:#10131b;color:#eef2ff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
+main{max-width:520px;background:#1b2230;border:1px solid #30394a;border-radius:18px;padding:28px;box-sizing:border-box}
+h1{margin-top:0}
+p{line-height:1.6;color:#c5cede}
+.muted{font-size:13px;color:#98a6ba;overflow-wrap:anywhere}
+button{display:block;width:100%;margin-top:12px;background:#7c9cff;color:#10131b;border:0;border-radius:10px;padding:13px 18px;font-weight:700;font-size:16px;cursor:pointer}
+button.secondary{background:#30394a;color:#eef2ff}
+button:disabled{opacity:.6;cursor:wait}
+</style>
+</head>
+<body>
+<main>
+<h1>Continue to your link</h1>
+<p><strong>${safeTitle}</strong></p>
+<p>Choose whether you want to allow BAZUU to record this click.</p>
+<p><strong>Basic analytics:</strong> Records the click time, browser/device category and referring page when available. BAZUU does not store your IP address or access your GPS location.</p>
+<p class="muted">Approximate location analytics are not currently available.</p>
+<p class="muted">Destination: ${safeDestination}</p>
+<button id="basic">Continue with basic analytics</button>
+<button id="noAnalytics" class="secondary">Continue without analytics</button>
+<p class="muted">Your choice does not prevent you from visiting the destination.</p>
+</main>
+<script>
+async function continueToDestination(consent) {
+  const buttons = document.querySelectorAll("button");
+  buttons.forEach(button => button.disabled = true);
+
+  try {
+    if (consent) {
+      await fetch("/api/click/${link.id}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({consent: true})
+      });
+    }
+  } catch (error) {
+    // Continue to the destination even if analytics cannot be saved.
+  }
+
+  window.location.assign(${JSON.stringify(link.destination)});
+}
+
+document.getElementById("basic").addEventListener("click", () => continueToDestination(true));
+document.getElementById("noAnalytics").addEventListener("click", () => continueToDestination(false));
+</script>
+</body>
+</html>`);
+});
 app.post("/api/click/:id", clickLimiter, (req, res) => {
   const link = data.links.find(l => l.id === req.params.id);
   if (!link) return res.status(404).json({ error: "Link not found." });
