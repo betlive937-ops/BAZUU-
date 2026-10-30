@@ -128,7 +128,7 @@ app.post("/api/click/:id", clickLimiter, (req, res) => {
   const ua = String(req.get("user-agent") || "").slice(0, 300);
   const referrer = String(req.get("referer") || "").slice(0, 500);
   const device = /mobile|android|iphone/i.test(ua) ? "Mobile" : (/ipad|tablet/i.test(ua) ? "Tablet" : "Desktop/Other");
-  const browser = /Edg\\//.test(ua) ? "Edge" : (/Firefox\\//.test(ua) ? "Firefox" : (/Chrome\\//.test(ua) ? "Chrome" : (/Safari\\//.test(ua) ? "Safari" : "Other")));
+  const browser = ua.includes("Edg/") ? "Edge" : (ua.includes("Firefox/") ? "Firefox" : (ua.includes("Chrome/") ? "Chrome" : (ua.includes("Safari/") ? "Safari" : "Other")));
   data.clicks.push({ id: crypto.randomBytes(8).toString("hex"), linkId: link.id, clickedAt: new Date().toISOString(), device, browser, referrer: referrer || "Not provided" });
   if (data.clicks.length > 10000) data.clicks = data.clicks.slice(-10000);
   saveData();
