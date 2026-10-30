@@ -24,10 +24,12 @@ a{color:#a9bcff}
 <h2>Visitor privacy and consent</h2>
 <p>Visitors can choose whether to allow approximate location analytics when opening a BAZUU tracking link. They can continue to the destination whether they select Yes or No.</p>
 <p>BAZUU records the click time, browser and device category, and referring page when available, whether a visitor selects Yes or No. This basic click recording is separate from the location choice.</p>
-<p>If a visitor selects Yes, an external provider processes their IP address to estimate their country, region and city. BAZUU does not retain raw IP addresses in its click records. If a visitor selects No, no location lookup is performed. Location results are visible only in the authenticated admin dashboard. BAZUU does not request GPS coordinates or access precise device location.</p>
+<p>If a visitor selects Yes, their browser may ask permission to share device location. If allowed, BAZUU sends coordinates to external mapping services to estimate the visitor area and identify nearby public landmarks, such as schools and churches. If GPS is unavailable or denied, BAZUU uses approximate IP-based location instead. External providers process the information needed for these lookups. BAZUU does not save raw GPS coordinates or raw IP addresses in click records. If a visitor selects No, BAZUU skips location collection but still records basic click analytics. Location results are visible only in the authenticated admin dashboard.</p>
 <h2>Admin dashboard</h2>
 <p>Open <a href="/admin">/admin</a> to sign in and manage tracking links.</p>
 </div>
+<p class="muted">Nearby landmark data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL).</p>
 </main>
 </body>
+
 </html>

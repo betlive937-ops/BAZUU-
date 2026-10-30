@@ -8,7 +8,7 @@ button{background:#8ba6ff;color:#10131b;border:0;padding:11px 16px;border-radius
 table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px;border-bottom:1px solid #354052;vertical-align:top}a{color:#afc1ff;overflow-wrap:anywhere}.stats{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#111827;padding:14px 18px;border-radius:10px;min-width:130px}.error{color:#ff9b9b}.success{color:#a6e6b6}
 @media(max-width:650px){table{font-size:13px}td,th{padding:7px}}
 </style></head><body><main>
-<h1>BAZUU dashboard</h1><p class="muted">Basic click analytics are recorded for all clicks. Approximate location is looked up only with visitor consent; raw IP addresses are not retained. No GPS data is collected.</p>
+<h1>BAZUU dashboard</h1><p class="muted">Basic click analytics are recorded for all clicks. Location lookup runs only with visitor consent. When GPS is permitted, approximate area and nearby public landmarks may be identified; otherwise IP-based location may be used. Raw GPS coordinates and raw IP addresses are not retained in click records. Location results may be unavailable when providers have insufficient data.</p>
 <div class="stats"><div class="stat">Links <strong id="linkCount">—</strong></div><div class="stat">Tracked clicks <strong id="clickCount">—</strong></div></div>
 <section class="card"><h2>Create a tracking link</h2><form id="createForm">
 <label>Link name</label><input id="title" maxlength="80" placeholder="e.g. YouTube campaign" required>
@@ -38,7 +38,12 @@ async function load(){
 async function viewClicks(id){
  try{
   const clicks=await api('/api/clicks/'+encodeURIComponent(id));
-  $('clickDetails').innerHTML=clicks.length?'<table><thead><tr><th>Time (UTC)</th><th>Device</th><th>Browser</th><th>Country</th><th>Region</th><th>City</th><th>Referrer</th></tr></thead><tbody>'+clicks.map(c=>`<tr><td>${esc(new Date(c.clickedAt).toLocaleString())}</td><td>${esc(c.device)}</td><td>${esc(c.browser)}</td><td>${esc(c.location && c.location.country ? c.location.country : "Not available")}</td><td>${esc(c.location && c.location.region ? c.location.region : "Not available")}</td><td>${esc(c.location && c.location.city ? c.location.city : "Not available")}</td><td>${esc(c.referrer)}</td></tr>`).join('')+'</tbody></table>':'No clicks recorded yet.';
+  const unavailable="Not available";
+  $('clickDetails').innerHTML=clicks.length?'<table><thead><tr><th>Time (UTC)</th><th>Device</th><th>Browser</th><th>Country</th><th>Region</th><th>City</th><th>Neighbourhood / Area</th><th>Nearest School / Place of worship</th><th>Approx. Distance</th><th>Location Source</th><th>Referrer</th></tr></thead><tbody>'+clicks.map(c=>{
+   const loc=c.location||{};
+   const landmark=loc.landmark||{};
+   return '<tr><td>'+esc(new Date(c.clickedAt).toLocaleString())+'</td><td>'+esc(c.device)+'</td><td>'+esc(c.browser)+'</td><td>'+esc(loc.country||unavailable)+'</td><td>'+esc(loc.region||unavailable)+'</td><td>'+esc(loc.city||unavailable)+'</td><td>'+esc(loc.neighbourhood||loc.suburb||loc.area||unavailable)+'</td><td>'+esc(landmark.name||unavailable)+'</td><td>'+esc(landmark.distanceMeters!=null?landmark.distanceMeters+" m":unavailable)+'</td><td>'+esc(loc.source||unavailable)+'</td><td>'+esc(c.referrer)+'</td></tr>';
+  }).join('')+'</tbody></table>':'No clicks recorded yet.';
  }catch(e){$('clickDetails').textContent=e.message;}
 }
 $('createForm').addEventListener('submit',async e=>{
@@ -50,4 +55,4 @@ $('createForm').addEventListener('submit',async e=>{
  }catch(err){$('message').innerHTML='<span class="error">'+esc(err.message)+'</span>';}
 });
 load();
-</script></body></html>
+</script><p class="muted">Nearby landmark data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL).</p></body></html>

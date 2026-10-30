@@ -12,6 +12,16 @@ const ADMIN_PASSWORD = process.env.BAZUU_ADMIN_PASSWORD;
 const BASE_URL = (process.env.BASE_URL || "").replace(/\/+$/, "");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "bazuu.json");
+const LANDMARKS_FILE = path.join(__dirname, "landmarks.json");
+let LANDMARKS = [];
+
+try {
+  LANDMARKS = JSON.parse(fs.readFileSync(LANDMARKS_FILE, "utf8"));
+  if (!Array.isArray(LANDMARKS)) throw new Error("Invalid landmark data");
+  console.log(`Loaded ${LANDMARKS.length} local landmarks.`);
+} catch (error) {
+  console.error("Local landmark data could not be loaded:", error.message);
+}
 
 if (!ADMIN_USER || !ADMIN_PASSWORD) {
   console.error("Set BAZUU_ADMIN_USER and BAZUU_ADMIN_PASSWORD before starting.");
@@ -23,6 +33,47 @@ if (ADMIN_PASSWORD.length < 14) {
 }
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const GEOCODE_CACHE_FILE = path.join(DATA_DIR, "nominatim-cache.json");
+let geocodeCache = {};
+try {
+  geocodeCache = JSON.parse(fs.readFileSync(GEOCODE_CACHE_FILE, "utf8"));
+  if (!geocodeCache || typeof geocodeCache !== "object" || Array.isArray(geocodeCache)) {
+    geocodeCache = {};
+  }
+} catch {
+  geocodeCache = {};
+}
+
+function saveGeocodeCache() {
+  const temp = GEOCODE_CACHE_FILE + ".tmp";
+  fs.writeFileSync(temp, JSON.stringify(geocodeCache), { mode: 0o600 });
+  fs.renameSync(temp, GEOCODE_CACHE_FILE);
+}
+
+let nominatimQueue = Promise.resolve();
+let nominatimLastRequestAt = 0;
+
+function queuedNominatimRequest(url) {
+  const request = nominatimQueue.then(async () => {
+    const wait = Math.max(0, 1000 - (Date.now() - nominatimLastRequestAt));
+    if (wait > 0) {
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+
+    nominatimLastRequestAt = Date.now();
+
+    return fetch(url, {
+      headers: {
+        "User-Agent": "BAZUU/1.0 (https://bazuu-tj9b.onrender.com)"
+      },
+      signal: AbortSignal.timeout(7000)
+    });
+  });
+
+  nominatimQueue = request.catch(() => {});
+  return request;
+}
 function loadData() {
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
@@ -124,7 +175,7 @@ button:disabled{opacity:.6;cursor:wait}
 <h1>Continue to your link</h1>
 <p><strong>${safeTitle}</strong></p>
 <p>Would you like to allow approximate location analytics? Your choice will not prevent you from visiting the destination.</p>
-<p><strong>Location analytics:</strong> If you select Yes, an external provider estimates your country, region and city from your IP address. BAZUU does not retain your raw IP address. GPS location is not collected.</p>
+<p><strong>Location analytics:</strong> If you select Yes, your browser may ask permission to share your device location. If allowed, BAZUU sends your coordinates to external mapping services to estimate your area and identify nearby public landmarks such as schools and churches. If GPS is unavailable or denied, BAZUU uses approximate IP-based location instead. External providers process the information needed for these lookups. BAZUU does not save raw GPS coordinates or raw IP addresses in click records. You can select No to skip location collection.</p>
 <p class="muted">Location results are visible only in the authenticated BAZUU admin dashboard.</p>
 <p class="muted">Destination: ${safeDestination}</p>
 <button id="locationYes">Yes</button>
@@ -136,12 +187,40 @@ async function continueToDestination(locationConsent) {
   const buttons = document.querySelectorAll("button");
   buttons.forEach(button => button.disabled = true);
 
-  fetch("/api/click/${link.id}", {
-    method: "POST",
-    keepalive: true,
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({consent: true, locationConsent})
-  }).catch(() => {});
+  let gps = null;
+
+  if (locationConsent && "geolocation" in navigator) {
+    gps = await new Promise(resolve => {
+      navigator.geolocation.getCurrentPosition(
+        position => resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        }),
+        () => resolve(null),
+        {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 0
+        }
+      );
+    });
+  }
+
+  try {
+    await fetch("/api/click/${link.id}", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        consent: true,
+        locationConsent,
+        gps
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+  } catch (error) {
+    console.error("Click recording failed:", error);
+  }
 
   window.location.assign(${JSON.stringify(link.destination)});
 }
@@ -178,27 +257,50 @@ app.post("/api/click/:id", clickLimiter, (req, res) => {
 
   res.json({ ok: true });
 
-  if (req.body.locationConsent === true && req.ip) {
+  if (req.body.locationConsent === true) {
+    const gps = req.body.gps;
     const visitorIp = req.ip;
 
-    fetch(`https://ipwho.is/${encodeURIComponent(visitorIp)}?fields=success,country,region,city`, {
-      signal: AbortSignal.timeout(5000)
-    })
-      .then(response => response.json())
-      .then(result => {
-        if (result.success === true) {
-          click.location = {
-            country: String(result.country || "Unknown").slice(0, 100),
-            region: String(result.region || "Unknown").slice(0, 100),
-            city: String(result.city || "Unknown").slice(0, 100)
-          };
+    (async () => {
+      try {
+        let location = null;
+
+        const validGps = gps &&
+          Number.isFinite(gps.latitude) &&
+          Number.isFinite(gps.longitude) &&
+          gps.latitude >= -90 && gps.latitude <= 90 &&
+          gps.longitude >= -180 && gps.longitude <= 180;
+
+        if (validGps) {
+          try {
+            location = await lookupGpsLocation(
+              gps.latitude,
+              gps.longitude,
+              Number.isFinite(gps.accuracy) ? gps.accuracy : null
+            );
+          } catch (error) {
+            console.error("GPS location lookup failed:", error.message);
+          }
+        }
+
+        if (!location && visitorIp) {
+          try {
+            location = await lookupIpLocation(visitorIp);
+          } catch (error) {
+            console.error("IP location lookup failed:", error.message);
+          }
+        }
+
+        if (location) {
+          click.location = location;
           saveData();
         }
-      })
-      .catch(error => console.error("Location lookup failed:", error.message));
+      } catch (error) {
+        console.error("Location processing failed:", error.message);
+      }
+    })();
   }
 });
-
 app.get("/api/summary", adminOnly, (_req, res) => {
   res.json({
     links: data.links.length,
@@ -209,6 +311,120 @@ app.get("/api/summary", adminOnly, (_req, res) => {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+
+function distanceBetweenMeters(lat1, lon1, lat2, lon2) {
+  const toRad = value => value * Math.PI / 180;
+  const earthRadius = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function lookupGpsLocation(latitude, longitude, accuracy) {
+  let address = {};
+
+  try {
+    const cacheKey = `${latitude.toFixed(3)},${longitude.toFixed(3)}`;
+
+    if (geocodeCache[cacheKey]) {
+      address = geocodeCache[cacheKey];
+    } else {
+      const reverseUrl = new URL("https://nominatim.openstreetmap.org/reverse");
+      reverseUrl.search = new URLSearchParams({
+        format: "jsonv2",
+        lat: String(latitude),
+        lon: String(longitude),
+        zoom: "18",
+        addressdetails: "1"
+      }).toString();
+
+      const reverseResponse = await queuedNominatimRequest(reverseUrl);
+
+      if (reverseResponse.ok) {
+        const reverse = await reverseResponse.json();
+        address = reverse.address || {};
+        geocodeCache[cacheKey] = address;
+        saveGeocodeCache();
+      }
+    }
+  } catch (error) {
+    console.error("GPS address lookup failed:", error.message);
+  }
+
+  const area = address.neighbourhood ||
+    address.suburb ||
+    address.quarter ||
+    address.village ||
+    address.town ||
+    address.city_district ||
+    address.city ||
+    address.county ||
+    null;
+
+  let landmark = null;
+  let nearestDistance = Infinity;
+
+  for (const item of LANDMARKS) {
+    if (!item ||
+        typeof item.name !== "string" ||
+        !Number.isFinite(item.latitude) ||
+        !Number.isFinite(item.longitude)) {
+      continue;
+    }
+
+    const distance = distanceBetweenMeters(
+      latitude,
+      longitude,
+      item.latitude,
+      item.longitude
+    );
+
+    if (distance <= 1500 && distance < nearestDistance) {
+      nearestDistance = distance;
+      landmark = {
+        name: item.name.slice(0, 150),
+        type: item.type,
+        distanceMeters: Math.round(distance)
+      };
+    }
+  }
+
+  return {
+    country: String(address.country || "Unknown").slice(0, 100),
+    region: String(address.state || address.county || "Unknown").slice(0, 100),
+    city: String(address.city || address.town || address.village || "Unknown").slice(0, 100),
+    neighbourhood: area ? String(area).slice(0, 150) : null,
+    landmark,
+    accuracyMeters: Number.isFinite(accuracy) ? Math.round(accuracy) : null,
+    source: "gps"
+  };
+}
+async function lookupIpLocation(visitorIp) {
+  const response = await fetch(
+    `https://ipwho.is/${encodeURIComponent(visitorIp)}?fields=success,country,region,city`,
+    { signal: AbortSignal.timeout(5000) }
+  );
+
+  if (!response.ok) throw new Error("IP location lookup unavailable.");
+
+  const result = await response.json();
+  if (result.success !== true) return null;
+
+  return {
+    country: String(result.country || "Unknown").slice(0, 100),
+    region: String(result.region || "Unknown").slice(0, 100),
+    city: String(result.city || "Unknown").slice(0, 100),
+    neighbourhood: null,
+    landmark: null,
+    accuracyMeters: null,
+    source: "ip"
+  };
 }
 
 app.listen(PORT, () => console.log(`BAZUU running on port ${PORT}`));
