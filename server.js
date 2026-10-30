@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
 const ADMIN_USER = process.env.BAZUU_ADMIN_USER;
 const ADMIN_PASSWORD = process.env.BAZUU_ADMIN_PASSWORD;
@@ -106,7 +107,7 @@ app.get("/r/:id", (req, res) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Continue — BAZUU</title>
+<title>Continue Ã¢â‚¬â€ BAZUU</title>
 <style>
 body{font:16px system-ui;background:#10131b;color:#eef2ff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
 main{max-width:520px;background:#1b2230;border:1px solid #30394a;border-radius:18px;padding:28px;box-sizing:border-box}
@@ -122,36 +123,31 @@ button:disabled{opacity:.6;cursor:wait}
 <main>
 <h1>Continue to your link</h1>
 <p><strong>${safeTitle}</strong></p>
-<p>Choose whether you want to allow BAZUU to record this click.</p>
-<p><strong>Basic analytics:</strong> Records the click time, browser/device category and referring page when available. BAZUU does not store your IP address or access your GPS location.</p>
-<p class="muted">Approximate location analytics are not currently available.</p>
+<p>Would you like to allow approximate location analytics? Your choice will not prevent you from visiting the destination.</p>
+<p><strong>Location analytics:</strong> If you select Yes, an external provider estimates your country, region and city from your IP address. BAZUU does not retain your raw IP address. GPS location is not collected.</p>
+<p class="muted">Location results are visible only in the authenticated BAZUU admin dashboard.</p>
 <p class="muted">Destination: ${safeDestination}</p>
-<button id="basic">Continue with basic analytics</button>
-<button id="noAnalytics" class="secondary">Continue without analytics</button>
+<button id="locationYes">Yes</button>
+<button id="locationNo" class="secondary">No</button>
 <p class="muted">Your choice does not prevent you from visiting the destination.</p>
 </main>
 <script>
-async function continueToDestination(consent) {
+async function continueToDestination(locationConsent) {
   const buttons = document.querySelectorAll("button");
   buttons.forEach(button => button.disabled = true);
 
-  try {
-    if (consent) {
-      await fetch("/api/click/${link.id}", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({consent: true})
-      });
-    }
-  } catch (error) {
-    // Continue to the destination even if analytics cannot be saved.
-  }
+  fetch("/api/click/${link.id}", {
+    method: "POST",
+    keepalive: true,
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({consent: true, locationConsent})
+  }).catch(() => {});
 
   window.location.assign(${JSON.stringify(link.destination)});
 }
 
-document.getElementById("basic").addEventListener("click", () => continueToDestination(true));
-document.getElementById("noAnalytics").addEventListener("click", () => continueToDestination(false));
+document.getElementById("locationYes").addEventListener("click", () => continueToDestination(true));
+document.getElementById("locationNo").addEventListener("click", () => continueToDestination(false));
 </script>
 </body>
 </html>`);
@@ -160,14 +156,47 @@ app.post("/api/click/:id", clickLimiter, (req, res) => {
   const link = data.links.find(l => l.id === req.params.id);
   if (!link) return res.status(404).json({ error: "Link not found." });
   if (req.body.consent !== true) return res.status(400).json({ error: "Visitor consent is required." });
+
   const ua = String(req.get("user-agent") || "").slice(0, 300);
   const referrer = String(req.get("referer") || "").slice(0, 500);
   const device = /mobile|android|iphone/i.test(ua) ? "Mobile" : (/ipad|tablet/i.test(ua) ? "Tablet" : "Desktop/Other");
   const browser = ua.includes("Edg/") ? "Edge" : (ua.includes("Firefox/") ? "Firefox" : (ua.includes("Chrome/") ? "Chrome" : (ua.includes("Safari/") ? "Safari" : "Other")));
-  data.clicks.push({ id: crypto.randomBytes(8).toString("hex"), linkId: link.id, clickedAt: new Date().toISOString(), device, browser, referrer: referrer || "Not provided" });
+
+  const click = {
+    id: crypto.randomBytes(8).toString("hex"),
+    linkId: link.id,
+    clickedAt: new Date().toISOString(),
+    device,
+    browser,
+    referrer: referrer || "Not provided",
+    location: null
+  };
+
+  data.clicks.push(click);
   if (data.clicks.length > 10000) data.clicks = data.clicks.slice(-10000);
   saveData();
+
   res.json({ ok: true });
+
+  if (req.body.locationConsent === true && req.ip) {
+    const visitorIp = req.ip;
+
+    fetch(`https://ipwho.is/${encodeURIComponent(visitorIp)}?fields=success,country,region,city`, {
+      signal: AbortSignal.timeout(5000)
+    })
+      .then(response => response.json())
+      .then(result => {
+        if (result.success === true) {
+          click.location = {
+            country: String(result.country || "Unknown").slice(0, 100),
+            region: String(result.region || "Unknown").slice(0, 100),
+            city: String(result.city || "Unknown").slice(0, 100)
+          };
+          saveData();
+        }
+      })
+      .catch(error => console.error("Location lookup failed:", error.message));
+  }
 });
 
 app.get("/api/summary", adminOnly, (_req, res) => {
