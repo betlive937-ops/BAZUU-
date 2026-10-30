@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BAZUU Admin</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#10131b;color:#eef2ff;font:15px system-ui;padding:24px}
+main{max-width:1050px;margin:auto}h1{margin-top:0}.muted{color:#9eabc0}.card{background:#1b2230;border:1px solid #30394a;border-radius:14px;padding:18px;margin:16px 0}
+input{width:100%;padding:12px;border-radius:8px;border:1px solid #46536a;background:#111827;color:white;margin:6px 0 12px}
+button{background:#8ba6ff;color:#10131b;border:0;padding:11px 16px;border-radius:8px;font-weight:700;cursor:pointer}button:disabled{opacity:.6}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px;border-bottom:1px solid #354052;vertical-align:top}a{color:#afc1ff;overflow-wrap:anywhere}.stats{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#111827;padding:14px 18px;border-radius:10px;min-width:130px}.error{color:#ff9b9b}.success{color:#a6e6b6}
+@media(max-width:650px){table{font-size:13px}td,th{padding:7px}}
+</style></head><body><main>
+<h1>BAZUU dashboard</h1><p class="muted">Consent-based click analytics. No IP or GPS collection.</p>
+<div class="stats"><div class="stat">Links <strong id="linkCount">—</strong></div><div class="stat">Consented clicks <strong id="clickCount">—</strong></div></div>
+<section class="card"><h2>Create a tracking link</h2><form id="createForm">
+<label>Link name</label><input id="title" maxlength="80" placeholder="e.g. YouTube campaign" required>
+<label>Destination URL</label><input id="destination" type="url" placeholder="https://www.youtube.com/watch?v=..." required>
+<button>Create link</button><p id="message" class="muted"></p></form></section>
+<section class="card"><h2>Your links</h2><div id="links">Loading…</div></section>
+<section class="card"><h2>Recent clicks</h2><div id="clickDetails" class="muted">Select “View clicks” beside a link.</div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+async function api(url, options={}) {
+  const r=await fetch(url,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
+  if(r.status===401) throw new Error('Sign-in required. Refresh and enter your BAZUU admin credentials.');
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.error||'Request failed');
+  return d;
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function load(){
+ try{
+  const [links,summary]=await Promise.all([api('/api/links'),api('/api/summary')]);
+  $('linkCount').textContent=summary.links;$('clickCount').textContent=summary.clicks;
+  if(!links.length){$('links').textContent='No links yet. Create your first link above.';return;}
+  $('links').innerHTML='<table><thead><tr><th>Name</th><th>Short link</th><th>Clicks</th><th>Actions</th></tr></thead><tbody>'+links.map(l=>`<tr><td>${esc(l.title)}</td><td><a href="${esc(l.shortUrl)}" target="_blank" rel="noopener">${esc(l.shortUrl)}</a></td><td>${l.clickCount}</td><td><button onclick="viewClicks('${esc(l.id)}')">View clicks</button></td></tr>`).join('')+'</tbody></table>';
+ }catch(e){$('links').innerHTML='<span class="error">'+esc(e.message)+'</span>';}
+}
+async function viewClicks(id){
+ try{
+  const clicks=await api('/api/clicks/'+encodeURIComponent(id));
+  $('clickDetails').innerHTML=clicks.length?'<table><thead><tr><th>Time (UTC)</th><th>Device</th><th>Browser</th><th>Referrer</th></tr></thead><tbody>'+clicks.map(c=>`<tr><td>${esc(new Date(c.clickedAt).toLocaleString())}</td><td>${esc(c.device)}</td><td>${esc(c.browser)}</td><td>${esc(c.referrer)}</td></tr>`).join('')+'</tbody></table>':'No consented clicks recorded yet.';
+ }catch(e){$('clickDetails').textContent=e.message;}
+}
+$('createForm').addEventListener('submit',async e=>{
+ e.preventDefault();$('message').textContent='Creating…';
+ try{
+  const result=await api('/api/links',{method:'POST',body:JSON.stringify({title:$('title').value,destination:$('destination').value})});
+  $('message').innerHTML='<span class="success">Created: <a target="_blank" rel="noopener" href="'+esc(result.shortUrl)+'">'+esc(result.shortUrl)+'</a></span>';
+  $('createForm').reset();await load();
+ }catch(err){$('message').innerHTML='<span class="error">'+esc(err.message)+'</span>';}
+});
+load();
+</script></body></html>
