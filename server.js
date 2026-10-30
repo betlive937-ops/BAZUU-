@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -158,30 +158,28 @@ app.get("/r/:id", (req, res) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Continue Ã¢â‚¬â€ BAZUU</title>
+<title>Continue to your link</title>
 <style>
-body{font:16px system-ui;background:#10131b;color:#eef2ff;display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
-main{max-width:520px;background:#1b2230;border:1px solid #30394a;border-radius:18px;padding:28px;box-sizing:border-box}
-h1{margin-top:0}
-p{line-height:1.6;color:#c5cede}
-.muted{font-size:13px;color:#98a6ba;overflow-wrap:anywhere}
-button{display:block;width:100%;margin-top:12px;background:#7c9cff;color:#10131b;border:0;border-radius:10px;padding:13px 18px;font-weight:700;font-size:16px;cursor:pointer}
+*{box-sizing:border-box}
+body{font:16px system-ui;background:#10131b;color:#eef2ff;display:grid;place-items:center;min-height:100vh;margin:0;padding:18px}
+.dialog{width:100%;max-width:390px;background:#1b2230;border:1px solid #30394a;border-radius:16px;padding:24px;box-shadow:0 20px 60px #0008}
+h2{margin:0 0 10px;font-size:21px}
+p{line-height:1.45;color:#c5cede;margin:0 0 18px}
+button{display:block;width:100%;margin-top:10px;background:#7c9cff;color:#10131b;border:0;border-radius:9px;padding:12px;font-weight:700;font-size:15px;cursor:pointer}
 button.secondary{background:#30394a;color:#eef2ff}
 button:disabled{opacity:.6;cursor:wait}
+.small{font-size:12px;color:#98a6ba;margin-top:14px;margin-bottom:0}
 </style>
 </head>
 <body>
-<main>
-<h1>Continue to your link</h1>
-<p><strong>${safeTitle}</strong></p>
-<p>Would you like to allow approximate location analytics? Your choice will not prevent you from visiting the destination.</p>
-<p><strong>Location analytics:</strong> If you select Yes, your browser may ask permission to share your device location. If allowed, BAZUU sends your coordinates to external mapping services to estimate your area and identify nearby public landmarks such as schools and churches. If GPS is unavailable or denied, BAZUU uses approximate IP-based location instead. External providers process the information needed for these lookups. BAZUU does not save raw GPS coordinates or raw IP addresses in click records. You can select No to skip location collection.</p>
-<p class="muted">Location results are visible only in the authenticated BAZUU admin dashboard.</p>
-<p class="muted">Destination: ${safeDestination}</p>
-<button id="locationYes">Yes</button>
-<button id="locationNo" class="secondary">No</button>
-<p class="muted">Your choice does not prevent you from visiting the destination.</p>
-</main>
+<section class="dialog" role="dialog" aria-modal="true" aria-labelledby="consentTitle">
+<h2 id="consentTitle">Share your location?</h2>
+<p>Sharing your approximate location helps us understand visitor activity. Your choice is optional and won't affect your visit.</p>
+<button id="shareOnce">Share once</button>
+<button id="shareAlways">Always share</button>
+<button id="locationNo" class="secondary">Don't share</button>
+<p class="small">Your browser may ask for location permission. You can change your choice in this browser.</p>
+</section>
 <script>
 async function continueToDestination(locationConsent) {
   const buttons = document.querySelectorAll("button");
@@ -198,11 +196,7 @@ async function continueToDestination(locationConsent) {
           accuracy: position.coords.accuracy
         }),
         () => resolve(null),
-        {
-          enableHighAccuracy: true,
-          timeout: 8000,
-          maximumAge: 0
-        }
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
       );
     });
   }
@@ -211,11 +205,7 @@ async function continueToDestination(locationConsent) {
     await fetch("/api/click/${link.id}", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        consent: true,
-        locationConsent,
-        gps
-      }),
+      body: JSON.stringify({ consent: true, locationConsent, gps }),
       signal: AbortSignal.timeout(10000)
     });
   } catch (error) {
@@ -225,8 +215,24 @@ async function continueToDestination(locationConsent) {
   window.location.assign(${JSON.stringify(link.destination)});
 }
 
-document.getElementById("locationYes").addEventListener("click", () => continueToDestination(true));
-document.getElementById("locationNo").addEventListener("click", () => continueToDestination(false));
+document.getElementById("shareOnce").addEventListener("click", () => {
+  continueToDestination(true);
+});
+
+document.getElementById("shareAlways").addEventListener("click", () => {
+  try { localStorage.setItem("bazuuLocationPreference", "always"); } catch (error) {}
+  continueToDestination(true);
+});
+
+document.getElementById("locationNo").addEventListener("click", () => {
+  continueToDestination(false);
+});
+
+let savedPreference = null;
+try { savedPreference = localStorage.getItem("bazuuLocationPreference"); } catch (error) {}
+if (savedPreference === "always") {
+  continueToDestination(savedPreference === "always");
+}
 </script>
 </body>
 </html>`);
